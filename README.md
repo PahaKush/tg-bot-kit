@@ -12,7 +12,7 @@ FSM-хранилище, мидлвари, экран ошибки, клавиа�
 Python 3.12+.
 
 ```bash
-pip install "tg-bot-kit @ https://github.com/PahaKush/tg-bot-kit/archive/refs/tags/v0.1.0.tar.gz"
+pip install "tg-bot-kit @ https://github.com/PahaKush/tg-bot-kit/archive/refs/tags/v0.1.1.tar.gz"
 ```
 
 Та же строка без кавычек подходит для `requirements.txt`. Архив тега не требует git, поэтому
@@ -124,6 +124,7 @@ creds = decrypt_fields(sealed, crypto=AppCrypto)
 
 ```python
 ALL = guards.collect_callbacks(models.callbacks)
+STRING_FIELD_LIMITS = {"query": 32}  # предел каждого строкового поля callback_data
 
 
 @pytest.mark.parametrize("klass", ALL, ids=lambda k: k.__name__)
@@ -133,7 +134,7 @@ def test_access_declared(klass):
 
 @pytest.mark.parametrize("klass", ALL, ids=lambda k: k.__name__)
 def test_fits_telegram_limit(klass):
-    guards.assert_callback_fits_telegram_limit(klass, {"flow_id": 8})
+    guards.assert_callback_fits_telegram_limit(klass, STRING_FIELD_LIMITS)
 
 
 def test_no_function_level_imports():

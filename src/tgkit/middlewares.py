@@ -272,12 +272,13 @@ class CallbackAnswerMiddleware(BaseMiddleware):
 
 
 def bound_to_state(handler: HandlerObject) -> bool:
-    """Хендлер — шаг сценария: среди его фильтров есть состояние FSM."""
+    """Хендлер — шаг сценария: среди его фильтров есть состояние FSM (StateFilter(None) — не шаг)."""
     for flt in handler.filters or ():
         cb = flt.callback
-        if isinstance(cb, State | StatesGroup | StateFilter):
-            return True
-        if isinstance(cb, type) and issubclass(cb, StatesGroup):
+        if isinstance(cb, StateFilter):
+            if any(s is not None for s in cb.states):
+                return True
+        elif isinstance(cb, State | StatesGroup) or (isinstance(cb, type) and issubclass(cb, StatesGroup)):
             return True
     return False
 

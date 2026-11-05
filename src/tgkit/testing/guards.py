@@ -20,8 +20,8 @@
 import ast
 import inspect
 import pathlib
-from types import ModuleType
-from typing import Any, get_args
+from types import ModuleType, NoneType, UnionType
+from typing import Any, Union, get_args, get_origin
 
 from aiogram.filters.callback_data import CallbackData
 
@@ -59,6 +59,8 @@ def worst_case_value(name: str, annotation: Any, string_limits: dict[str, int], 
     обязано попасть в string_limits — иначе тест не пройдёт и автор задумается, чем оно
     вообще ограничено.
     """
+    if annotation is bool:
+        return True
     if annotation is int:
         return TELEGRAM_ID_MAX if name in telegram_id_fields else INTERNAL_ID_MAX
     if annotation is str:
@@ -67,8 +69,15 @@ def worst_case_value(name: str, annotation: Any, string_limits: dict[str, int], 
             f"худший случай упаковки callback_data."
         )
         return "a" * string_limits[name]
-    options = get_args(annotation) or list(annotation)
-    return max(options, key=lambda o: len(str(getattr(o, "value", o))))
+    args = get_args(annotation)
+    if isinstance(annotation, UnionType) or get_origin(annotation) is Union:
+        values = [worst_case_value(name, a, string_limits, telegram_id_fields) for a in args if a is not NoneType]
+        return max(values, key=_packed_len)
+    return max(args or list(annotation), key=_packed_len)
+
+
+def _packed_len(value: Any) -> int:
+    return len(str(getattr(value, "value", value)))
 
 
 def assert_callback_fits_telegram_limit(
@@ -82,11 +91,13 @@ def assert_callback_fits_telegram_limit(
     values = {
         name: worst_case_value(name, f.annotation, string_limits, tg_fields) for name, f in klass.model_fields.items()
     }
-    packed = klass(**values).pack()
+    try:
+        packed = klass(**values).pack()
+    except ValueError as e:  # aiogram сам отказывается паковать больше 64 байт
+        raise AssertionError(f"{klass.__name__} в худшем случае не влезает в лимит {limit} байт: {e}") from e
 
-    assert len(packed) <= limit, (
-        f"{klass.__name__} в худшем случае даёт {len(packed)} байт при лимите {limit}: {packed}"
-    )
+    size = len(packed.encode())
+    assert size <= limit, f"{klass.__name__} в худшем случае даёт {size} байт при лимите {limit}: {packed}"
 
 
 def handler_modules(handlers_dir: pathlib.Path) -> list[pathlib.Path]:

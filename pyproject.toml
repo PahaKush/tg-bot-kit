@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tg-bot-kit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Каркас Telegram-бота на aiogram 3: слои, транзакции, deny-by-default авторизация коллбэков"
 readme = "README.md"
 license = "MIT"

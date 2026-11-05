@@ -143,3 +143,17 @@ def test_bound_to_state_reads_handler_filters(harness):
     assert bound_to_state(by_name["flow_button"])
     assert bound_to_state(by_name["flow_button_state_filter"])
     assert not bound_to_state(by_name["navigation_screen"])
+
+
+def test_state_filter_none_is_not_a_step():
+    router = Router()
+
+    @router.message(StateFilter(None))
+    async def outside_any_flow(message: Message) -> None: ...
+
+    @router.message(StateFilter(None, Flow.waiting_text))
+    async def outside_or_step(message: Message) -> None: ...
+
+    outside, mixed = router.message.handlers
+    assert not bound_to_state(outside)
+    assert bound_to_state(mixed)

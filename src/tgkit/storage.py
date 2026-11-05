@@ -45,14 +45,13 @@ class SQLiteStorage(BaseStorage):
             if self._conn is not None:  # мог успеть создать тот, кто держал лок до нас
                 return self._conn
 
-            conn = await aiosqlite.connect(self.db_path)
-            # Ускоряем работу SQLite для FSM (отключаем лишние синхронизации с диском)
+            # Автокоммит: каждый оператор хранилища атомарен сам по себе.
+            conn = await aiosqlite.connect(self.db_path, isolation_level=None)
             await conn.execute("PRAGMA journal_mode=WAL;")
             await conn.execute("PRAGMA synchronous=NORMAL;")
 
             await self._ensure_schema(conn)
             await self._drop_stale(conn)
-            await conn.commit()
 
             self._conn = conn
             return conn
@@ -114,7 +113,6 @@ class SQLiteStorage(BaseStorage):
                 "REPLACE INTO states (bot_id, chat_id, user_id, destiny, state, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (*self._key(key), state_str, int(time.time())),
             )
-        await conn.commit()
 
     async def get_state(self, key: StorageKey) -> str | None:
         conn = await self._get_conn()
@@ -131,7 +129,6 @@ class SQLiteStorage(BaseStorage):
                 "REPLACE INTO data (bot_id, chat_id, user_id, destiny, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (*self._key(key), json.dumps(dict(data)), int(time.time())),
             )
-        await conn.commit()
 
     async def get_data(self, key: StorageKey) -> dict[str, Any]:
         conn = await self._get_conn()
