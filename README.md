@@ -12,7 +12,7 @@ FSM-хранилище, мидлвари, экран ошибки, клавиа�
 Python 3.12+.
 
 ```bash
-pip install "tg-bot-kit @ https://github.com/PahaKush/tg-bot-kit/archive/refs/tags/v0.1.1.tar.gz"
+pip install "tg-bot-kit @ https://github.com/PahaKush/tg-bot-kit/archive/refs/tags/v0.1.2.tar.gz"
 ```
 
 Та же строка без кавычек подходит для `requirements.txt`. Архив тега не требует git, поэтому
@@ -30,9 +30,10 @@ pip install "tg-bot-kit @ https://github.com/PahaKush/tg-bot-kit/archive/refs/ta
 | `tgkit.core.exceptions` | `AppError` несёт текст для человека и показывается как есть; остальное логируется с трассой и заменяется общим сообщением, чтобы в интерфейс не утекали пути, SQL и внутренние имена |
 | `tgkit.utils.error_screen` | Экран ошибки с кнопкой «назад». Глобальный роутер умеет только алерт: он не знает, куда возвращать пользователя |
 | `tgkit.middlewares` | Семь мидлварей, каждая делает одну вещь (см. «Подключение») |
+| `tgkit.filters` | `IsAdmin` — хендлер виден только админам |
 | `tgkit.kb` | Примитивы клавиатур: `build_kb`, `confirm_kb`, пагинация |
 | `tgkit.crypto` | Fernet для данных в покое и шифрование полей, которые модель объявляет сама через `secret_fields` |
-| `tgkit.utils.delivery` | Различает «не запускал бота» (400 `chat not found`) и «заблокировал» (403). Ловить только 403 мало: самый частый случай проходит мимо |
+| `tgkit.utils.delivery` | Различает «не запускал бота» (400 `chat not found`) и «заблокировал» (403): ловить только 403 мало, самый частый случай проходит мимо. `broadcast()` — рассылка с паузой, ожиданием на 429 и отчётом по исходам |
 | `tgkit.testing.guards` | Начинка стражей: разметка доступа, 64 байта `callback_data`, правила слоя хендлеров |
 
 ## Подключение
@@ -65,6 +66,17 @@ abandoned_flow = AbandonedFlowMiddleware()
 dp.callback_query.middleware(abandoned_flow)
 dp.message.middleware(abandoned_flow)
 ```
+
+Админ-команды закрываются фильтром, а не проверкой в теле хендлера:
+
+```python
+@router.message(Command("settings"), IsAdmin())
+async def handle_settings(message: Message) -> None: ...
+```
+
+Иначе для обычного пользователя команда всё равно совпадает: мидлвари перед хендлером уже
+отработали (и закрыли бы его сценарий), а молчание вместо «не понял» выдаёт, какие админ-команды
+существуют. `is_admin` для фильтра не годится: его ставит inner-мидлварь, а фильтры работают раньше.
 
 ## Разметка доступа: deny-by-default
 
@@ -124,7 +136,7 @@ creds = decrypt_fields(sealed, crypto=AppCrypto)
 
 ```python
 ALL = guards.collect_callbacks(models.callbacks)
-STRING_FIELD_LIMITS = {"query": 32}  # предел каждого строкового поля callback_data
+STRING_FIELD_LIMITS = {"query": 32}  # предел каждого строкового поля в байтах UTF-8
 
 
 @pytest.mark.parametrize("klass", ALL, ids=lambda k: k.__name__)

@@ -18,6 +18,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
+from enum import Enum
 from typing import Any, NotRequired, Protocol, Required, cast, runtime_checkable
 
 from aiogram import BaseMiddleware
@@ -132,14 +133,14 @@ class AccessControlMiddleware(BaseMiddleware):
     def __init__(
         self,
         *,
-        admin_level: str = "admin",
-        open_levels: Sequence[str] = ("public", "user", "handler"),
+        admin_level: str | Enum = "admin",
+        open_levels: Sequence[str | Enum] = ("public", "user", "handler"),
         resolver: ResourceResolver | None = None,
         unmarked_text: str = "⚠️ Действие недоступно. Обновите меню: /start",
         denied_text: str = "Недостаточно прав.",
     ):
-        self.admin_level = admin_level
-        self.open_levels = set(open_levels)
+        self.admin_level = _level(admin_level)
+        self.open_levels = {_level(v) for v in open_levels}
         self.resolver = resolver
         self.unmarked_text = unmarked_text
         self.denied_text = denied_text
@@ -173,7 +174,7 @@ class AccessControlMiddleware(BaseMiddleware):
             )
             return None
 
-        level = str(access)
+        level = _level(access)
 
         if level in self.open_levels:
             return await handler(event, data)
@@ -191,6 +192,11 @@ class AccessControlMiddleware(BaseMiddleware):
         if not await self.resolver(level, event, cast(AppMiddlewareData, data)):
             return None  # resolver сам отвечает пользователю: только он знает, что именно не так
         return await handler(event, data)
+
+
+def _level(value: object) -> str:
+    """Уровень строкой: StrEnum, обычный Enum и строка сравниваются по значению."""
+    return str(getattr(value, "value", value))
 
 
 class ValidCallbackMiddleware(BaseMiddleware):
@@ -233,8 +239,9 @@ class ThrottlingMiddleware(BaseMiddleware):
         if rate_limit is False:
             return await handler(event, data)
 
-        limit = rate_limit if isinstance(rate_limit, int | float) else self.default_rate_limit
-        now = time.time()
+        if isinstance(rate_limit, bool) or not isinstance(rate_limit, int | float):
+            rate_limit = self.default_rate_limit  # флаг без числа (`@flags.rate_limit`) — тоже по умолчанию
+        now = time.monotonic()
 
         if user.id in self.users and now < self.users[user.id]:
             if isinstance(event, CallbackQuery):
@@ -242,7 +249,7 @@ class ThrottlingMiddleware(BaseMiddleware):
                     await event.answer()  # гасим «часики» у отброшенного клика
             return None
 
-        self.users[user.id] = now + limit
+        self.users[user.id] = now + rate_limit
 
         if len(self.users) > self.gc_threshold:
             self.users = {k: v for k, v in self.users.items() if v > now}

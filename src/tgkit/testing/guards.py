@@ -55,9 +55,9 @@ def assert_every_callback_declares_access(klass: type[CallbackData], levels: Any
 def worst_case_value(name: str, annotation: Any, string_limits: dict[str, int], telegram_id_fields: set[str]) -> Any:
     """Самое длинное значение, которое поле может принять в проде.
 
-    Строковые поля не угадываются: их предел объявляет приложение. Новое строковое поле
-    обязано попасть в string_limits — иначе тест не пройдёт и автор задумается, чем оно
-    вообще ограничено.
+    Строковые поля не угадываются: их предел в байтах UTF-8 объявляет приложение (у
+    кириллицы символ — два байта). Новое строковое поле обязано попасть в string_limits —
+    иначе тест не пройдёт и автор задумается, чем оно вообще ограничено.
     """
     if annotation is bool:
         return True
@@ -131,7 +131,7 @@ def assert_no_private_imports_between_handlers(handlers_dir: pathlib.Path, packa
     offenders = []
     for path in handler_modules(handlers_dir):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(f"{package}."):
+            if isinstance(node, ast.ImportFrom) and (node.level > 0 or (node.module or "").startswith(f"{package}.")):
                 for alias in node.names:
                     if alias.name.startswith("_"):
                         offenders.append(f"{path.name}:{node.lineno} — {node.module}.{alias.name}")
@@ -148,6 +148,18 @@ def assert_error_screens_go_through_one_helper(handlers_dir: pathlib.Path, symbo
     Иначе каждый хендлер заново решает, какую кнопку «назад» показать, и экраны
     расходятся с навигацией того места, откуда пришёл пользователь.
     """
-    offenders = [p.name for p in handler_modules(handlers_dir) if symbol in p.read_text(encoding="utf-8")]
+    offenders = [p.name for p in handler_modules(handlers_dir) if _uses_name(p, symbol)]
 
     assert not offenders, f"Свой обработчик ошибки вместо общего экрана в: {', '.join(offenders)}."
+
+
+def _uses_name(path: pathlib.Path, symbol: str) -> bool:
+    """Имя встречается в коде — импорт, вызов, атрибут, — а не в комментарии или докстринге."""
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if (
+            (isinstance(node, ast.Name) and node.id == symbol)
+            or (isinstance(node, ast.Attribute) and node.attr == symbol)
+            or (isinstance(node, ast.alias) and node.name == symbol)
+        ):
+            return True
+    return False

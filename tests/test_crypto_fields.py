@@ -73,6 +73,18 @@ def test_strict_policy_does_not_pass_garbage_off_as_value(monkeypatch):
         decrypt_fields(Creds(login="a", password="not-a-fernet-token"), crypto=StrictCrypto)
 
 
+def test_subclass_does_not_reuse_the_base_cache(monkeypatch):
+    monkeypatch.setenv(CryptoService.env_var, Fernet.generate_key().decode())
+    monkeypatch.delenv("OTHER_KEY", raising=False)
+
+    class OtherKey(CryptoService):
+        env_var = "OTHER_KEY"
+
+    CryptoService.encrypt("base cipher is now cached")
+    with pytest.raises(ValueError, match="OTHER_KEY"):
+        OtherKey.encrypt("x")
+
+
 def test_roundtrip_encrypts_only_secret_fields(monkeypatch):
     monkeypatch.setenv(CryptoService.env_var, Fernet.generate_key().decode())
     creds = Creds(login="alice", password="hunter2")

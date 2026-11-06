@@ -4,7 +4,9 @@
 отдельно.
 """
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters.callback_data import CallbackData
+from aiogram.methods import SendMessage
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from tgkit.core.exceptions import NotFoundError
@@ -93,3 +95,29 @@ async def test_no_back_target_means_no_keyboard():
 
     _, markup = r.calls[0]
     assert markup is None
+
+
+NOT_MODIFIED = TelegramBadRequest(
+    method=SendMessage(chat_id=1, text="x"),
+    message="Bad Request: message is not modified: specified new message content and reply markup are exactly the same",
+)
+
+
+async def test_unchanged_screen_is_not_an_error():
+    """Повторный клик перерисовывает экран тем же текстом — это не повод показывать ошибку."""
+    r = _Recorder()
+    async with error_screen(r, "❌ Ошибка.", ListCB()) as screen:
+        raise NOT_MODIFIED
+
+    assert r.calls == []
+    assert screen.failed is False
+
+
+async def test_unchanged_error_screen_is_not_raised():
+    async def respond(text, markup):
+        raise NOT_MODIFIED
+
+    async with error_screen(respond, "❌ Ошибка.") as screen:
+        raise RuntimeError("boom")
+
+    assert screen.failed is True

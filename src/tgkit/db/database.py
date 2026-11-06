@@ -12,10 +12,6 @@ from tgkit.db.migrations import Migration, run_migrations
 
 logger = logging.getLogger(__name__)
 
-# Соединение активной транзакции для текущего async-контекста.
-# None -> транзакция не открыта (режим чтения).
-_tx_conn: ContextVar[aiosqlite.Connection | None] = ContextVar("_tx_conn", default=None)
-
 # Ключевые слова мутаций. Используются как защита read-методов от случайной записи.
 _WRITE_KEYWORDS = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP"})
 
@@ -50,6 +46,9 @@ class Database:
         self._db_path = Path(db_path)
         self._write_conn: aiosqlite.Connection | None = None
         self._write_lock = asyncio.Lock()
+        # Соединение открытой транзакции в текущем async-контексте. Своё у каждого
+        # экземпляра: иначе запрос второй базы внутри транзакции первой ушёл бы в первую.
+        self._tx_conn: ContextVar[aiosqlite.Connection | None] = ContextVar(f"tx_conn_{id(self)}", default=None)
 
         self._read_pool_size = max(1, read_pool_size)
         self._read_pool: asyncio.Queue[aiosqlite.Connection] | None = None
@@ -115,7 +114,7 @@ class Database:
         Task'и копируют контекст и увидят `_tx_conn` выставленным → конкурентное использование
         одного write-соединения. Внутри транзакции — только последовательные await.
         """
-        existing = _tx_conn.get()
+        existing = self._tx_conn.get()
         if existing is not None:
             yield existing
             return
@@ -125,15 +124,18 @@ class Database:
             # BEGIN IMMEDIATE сразу резервирует write-lock SQLite,
             # исключая "database is locked" при конкурентной записи.
             await conn.execute("BEGIN IMMEDIATE")
-            token = _tx_conn.set(conn)
+            token = self._tx_conn.set(conn)
             try:
                 yield conn
                 await conn.commit()
             except BaseException:
-                await conn.rollback()
+                try:
+                    await conn.rollback()
+                except Exception:
+                    logger.exception("Откат транзакции не удался")
                 raise
             finally:
-                _tx_conn.reset(token)
+                self._tx_conn.reset(token)
 
     # --- Чтение (без блокировок, через пул) ---
 
@@ -151,7 +153,7 @@ class Database:
     async def fetch_all(self, query: str, params: tuple[Any, ...] = ()) -> list[aiosqlite.Row]:
         """Возвращает все строки. Работает и вне, и внутри транзакции."""
         self._guard_read(query)
-        tx = _tx_conn.get()
+        tx = self._tx_conn.get()
         if tx is not None:
             async with tx.execute(query, params) as cursor:
                 return cast(list[aiosqlite.Row], await cursor.fetchall())
@@ -161,7 +163,7 @@ class Database:
     async def fetch_one(self, query: str, params: tuple[Any, ...] = ()) -> aiosqlite.Row | None:
         """Возвращает первую строку или None."""
         self._guard_read(query)
-        tx = _tx_conn.get()
+        tx = self._tx_conn.get()
         if tx is not None:
             async with tx.execute(query, params) as cursor:
                 return await cursor.fetchone()
@@ -193,9 +195,8 @@ class Database:
                 "execute()/execute_insert() внутри `async with db.transaction()`."
             )
 
-    @staticmethod
-    def _require_tx(query: str) -> aiosqlite.Connection:
-        conn = _tx_conn.get()
+    def _require_tx(self, query: str) -> aiosqlite.Connection:
+        conn = self._tx_conn.get()
         if conn is None:
             raise RuntimeError(
                 "Попытка записи вне транзакции. Оберните вызов в `async with db.transaction():`. "

@@ -62,6 +62,23 @@ def test_worst_case_takes_the_longest_option():
     assert guards.worst_case_value("user_id", int | None, {}, {"user_id"}) == guards.TELEGRAM_ID_MAX
 
 
+def test_relative_import_of_a_private_name_is_caught(tmp_path):
+    (tmp_path / "a.py").write_text("from .b import _helper\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("_helper = 1\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="_helper"):
+        guards.assert_no_private_imports_between_handlers(tmp_path)
+
+
+def test_error_helper_is_found_in_code_not_in_docstrings(tmp_path):
+    (tmp_path / "a.py").write_text('"""Не зовите safe_error_text напрямую."""\n', encoding="utf-8")
+    guards.assert_error_screens_go_through_one_helper(tmp_path)
+
+    (tmp_path / "b.py").write_text("from tgkit.core.exceptions import safe_error_text\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="b.py"):
+        guards.assert_error_screens_go_through_one_helper(tmp_path)
+
+
 def test_string_field_without_limit_fails():
     with pytest.raises(AssertionError, match="предел"):
         guards.assert_callback_fits_telegram_limit(LongQueryCB, {})

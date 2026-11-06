@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardMarkup, Message
 
@@ -57,11 +58,15 @@ async def error_screen(respond: Respond, fallback: str, back: BackTarget | None 
     `fallback` показывается только для НЕ-доменных ошибок; у AppError и наследников
     берётся их собственный user_message (см. safe_error_text). `back=None` — для мест,
     где возвращать некуда и достаточно текста.
+
+    «message is not modified» — не ошибка: экран уже такой, каким его хотели нарисовать.
     """
     screen = ErrorScreen()
     try:
         yield screen
     except Exception as e:
+        if _not_modified(e):
+            return
         screen.failed = True
         if back is None:
             markup = None
@@ -69,4 +74,12 @@ async def error_screen(respond: Respond, fallback: str, back: BackTarget | None 
             markup = back
         else:
             markup = back_btn(back)
-        await respond(safe_error_text(e, fallback), markup)
+        try:
+            await respond(safe_error_text(e, fallback), markup)
+        except TelegramBadRequest as err:
+            if not _not_modified(err):
+                raise
+
+
+def _not_modified(e: BaseException) -> bool:
+    return isinstance(e, TelegramBadRequest) and "message is not modified" in str(e)

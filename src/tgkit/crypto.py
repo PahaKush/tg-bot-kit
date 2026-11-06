@@ -73,7 +73,8 @@ class CryptoService:
 
     @classmethod
     def _cipher(cls) -> Fernet | None:
-        if not cls._checked:
+        # Флаг — из __dict__ самого класса: по MRO подкласс нашёл бы кэш базового с чужим ключом.
+        if not cls.__dict__.get("_checked", False):
             key = os.getenv(cls.env_var)
             if not key and cls.required:
                 raise ValueError(f"{cls.env_var} не задан в окружении")

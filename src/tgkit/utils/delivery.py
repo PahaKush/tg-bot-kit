@@ -12,7 +12,13 @@
 отправки там, где нужно просто попросить человека запустить бота.
 """
 
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+import asyncio
+import logging
+from collections.abc import Iterable
+from dataclasses import dataclass
+
+from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 
 _NEVER_STARTED = "человек не запускал бота"
 _BLOCKED = "человек заблокировал бота"
@@ -29,3 +35,41 @@ def undeliverable_reason(exc: Exception) -> str | None:
     if isinstance(exc, TelegramBadRequest) and "chat not found" in str(exc).lower():
         return _NEVER_STARTED
     return None
+
+
+@dataclass
+class BroadcastReport:
+    delivered: int = 0
+    unreachable: int = 0  # не запускал бота или заблокировал — штатный исход
+    failed: int = 0
+    aborted: str | None = None  # Telegram отверг сам текст — слать дальше бессмысленно
+
+
+async def broadcast(bot: Bot, chat_ids: Iterable[int], text: str, *, pause: float = 0.05) -> BroadcastReport:
+    """Шлёт текст по списку и раскладывает исходы.
+
+    Пауза держит рассылку ниже лимита Bot API (~30 сообщений/с); на 429 ждём, сколько
+    просит Telegram, и повторяем. Ошибка разметки одинакова для всех получателей, поэтому
+    на ней рассылка прерывается сразу.
+    """
+    report = BroadcastReport()
+    for chat_id in chat_ids:
+        try:
+            try:
+                await bot.send_message(chat_id, text)
+            except TelegramRetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+                await bot.send_message(chat_id, text)
+        except Exception as e:
+            if isinstance(e, TelegramBadRequest) and "can't parse entities" in str(e).lower():
+                report.aborted = str(e)
+                break
+            if undeliverable_reason(e) is None:
+                report.failed += 1
+                logging.warning("Рассылка: не удалось отправить %s: %s", chat_id, e)
+            else:
+                report.unreachable += 1
+        else:
+            report.delivered += 1
+        await asyncio.sleep(pause)
+    return report

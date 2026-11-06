@@ -1,5 +1,6 @@
 """Форматирование текста для сообщений. Только то, что не зависит от предметной области."""
 
+import ipaddress
 import re
 import time
 from datetime import UTC, datetime
@@ -63,7 +64,7 @@ def format_uptime(seconds: int) -> str:
 
 def get_progress_bar(percent: float, width: int = 10) -> str:
     """Полоска загрузки из символов — дешевле картинки и не требует загрузки файла."""
-    filled = int(round(width * percent / 100))
+    filled = max(0, min(width, round(width * percent / 100)))
     return f"[{'▬' * filled}{'▭' * (width - filled)}]"
 
 
@@ -92,17 +93,32 @@ def is_valid_domain(domain: str) -> bool:
 
 
 def mask_endpoint(endpoint: str | None, placeholder: str = "Не подключен") -> str:
-    """Прячет две последние группы IPv4 в адресе клиента.
+    """Прячет хвост адреса клиента: `1.2.*.*:51820`, `[2001:…]:51820`.
 
     Для экранов, где видны адреса других пользователей: точный IP — это уже геоданные,
-    и показывать их целиком незачем.
+    и показывать их целиком незачем. Порт необязателен.
     """
     if not endpoint or endpoint == placeholder:
         return endpoint or placeholder
-    if ":" not in endpoint:
-        return endpoint
-    ip, port = endpoint.rsplit(":", 1)
-    parts = ip.split(".")
-    if len(parts) == 4:  # IPv4
-        return f"{parts[0]}.{parts[1]}.*.*:{port}"
-    return f"{ip[:4]}…:{port}"  # IPv6 / нестандартный формат
+
+    if endpoint.startswith("["):
+        host, _, rest = endpoint[1:].partition("]")
+        port = rest.removeprefix(":")
+    elif endpoint.count(":") == 1:
+        host, port = endpoint.split(":")
+    else:
+        host, port = endpoint, ""
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        masked = f"{host[:4]}…"
+    else:
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        if ip.version == 4:
+            a, b, *_ = str(ip).split(".")
+            masked = f"{a}.{b}.*.*"
+        else:
+            masked = f"[{str(ip).split(':')[0]}:…]"
+    return f"{masked}:{port}" if port else masked
